@@ -3,12 +3,10 @@ from encoder import inference as encoder
 from synthesizer.inference import Synthesizer
 from vocoder.wavernn import inference as rnn_vocoder
 from vocoder.hifigan import inference as gan_vocoder
-import ppg_extractor as extractor
-import ppg2mel as convertor
+from vocoder.fregan import inference as fgan_vocoder
 from pathlib import Path
 from time import perf_counter as timer
 from toolbox.utterance import Utterance
-from utils.f0_utils import compute_f0, f02lf0, compute_mean_std, get_converted_lf0uv
 import numpy as np
 import traceback
 import sys
@@ -40,8 +38,7 @@ recognized_datasets = [
     "VoxCeleb2/dev/aac",
     "VoxCeleb2/test/aac",
     "VCTK-Corpus/wav48",
-    "aidatatang_200zh/corpus/dev",
-    "aidatatang_200zh/corpus/test",
+    "aidatatang_200zh/corpus",
     "aishell3/test/wav",
     "magicdata/train",
 ]
@@ -373,6 +370,8 @@ class Toolbox:
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         ref_wav = self.ui.selected_utterance.wav
+        # Import necessary dependency of Voice Conversion
+        from utils.f0_utils import compute_f0, f02lf0, compute_mean_std, get_converted_lf0uv   
         ref_lf0_mean, ref_lf0_std = compute_mean_std(f02lf0(compute_f0(ref_wav)))
         lf0_uv = get_converted_lf0uv(src_wav, ref_lf0_mean, ref_lf0_std, convert=True)
         min_len = min(ppg.shape[1], len(lf0_uv))
@@ -397,6 +396,7 @@ class Toolbox:
         self.ui.log("Loading the extractor %s... " % model_fpath)
         self.ui.set_loading(1)
         start = timer()
+        import ppg_extractor as extractor
         self.extractor = extractor.load_model(model_fpath)
         self.ui.log("Done (%dms)." % int(1000 * (timer() - start)), "append")
         self.ui.set_loading(0)
@@ -405,15 +405,11 @@ class Toolbox:
         if self.ui.current_convertor_fpath is None:
             return
         model_fpath = self.ui.current_convertor_fpath
-        # search a config file
-        model_config_fpaths = list(model_fpath.parent.rglob("*.yaml"))
-        if self.ui.current_convertor_fpath is None:
-            return
-        model_config_fpath = model_config_fpaths[0]
         self.ui.log("Loading the convertor %s... " % model_fpath)
         self.ui.set_loading(1)
         start = timer()
-        self.convertor = convertor.load_model(model_config_fpath, model_fpath)
+        import ppg2mel as convertor
+        self.convertor = convertor.load_model( model_fpath)
         self.ui.log("Done (%dms)." % int(1000 * (timer() - start)), "append")
         self.ui.set_loading(0)
         
@@ -446,14 +442,24 @@ class Toolbox:
             return 
         # Sekect vocoder based on model name
         model_config_fpath = None
-        if model_fpath.name[0] == "g":
+        if model_fpath.name is not None and model_fpath.name.find("hifigan") > -1:
             vocoder = gan_vocoder
             self.ui.log("set hifigan as vocoder")
             # search a config file
             model_config_fpaths = list(model_fpath.parent.rglob("*.json"))
             if self.vc_mode and self.ui.current_extractor_fpath is None:
                 return
-            model_config_fpath = model_config_fpaths[0]
+            if len(model_config_fpaths) > 0:
+                model_config_fpath = model_config_fpaths[0]
+        elif model_fpath.name is not None and model_fpath.name.find("fregan") > -1:
+            vocoder = fgan_vocoder
+            self.ui.log("set fregan as vocoder")
+            # search a config file
+            model_config_fpaths = list(model_fpath.parent.rglob("*.json"))
+            if self.vc_mode and self.ui.current_extractor_fpath is None:
+                return
+            if len(model_config_fpaths) > 0:
+                model_config_fpath = model_config_fpaths[0]
         else:
             vocoder = rnn_vocoder
             self.ui.log("set wavernn as vocoder")

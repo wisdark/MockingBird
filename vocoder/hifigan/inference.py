@@ -3,7 +3,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import os
 import json
 import torch
-from vocoder.hifigan.env import AttrDict
+from utils.util import AttrDict
 from vocoder.hifigan.models import Generator
 
 generator = None       # type: Generator
@@ -19,12 +19,18 @@ def load_checkpoint(filepath, device):
     return checkpoint_dict
 
 
-def load_model(weights_fpath, config_fpath="./vocoder/saved_models/24k/config.json", verbose=True):
+def load_model(weights_fpath, config_fpath=None, verbose=True):
     global generator, _device, output_sample_rate
 
     if verbose:
         print("Building hifigan")
 
+    if config_fpath == None:
+        model_config_fpaths = list(weights_fpath.parent.rglob("*.json"))
+        if len(model_config_fpaths) > 0:
+            config_fpath = model_config_fpaths[0]
+        else:
+            config_fpath = "./vocoder/hifigan/config_16k_.json"
     with open(config_fpath) as f:
         data = f.read()
     json_config = json.loads(data)
