@@ -45,7 +45,7 @@ def extract_emo(
     return y
 
 def _process_utterance(wav: np.ndarray, text: str, out_dir: Path, basename: str, 
-                      skip_existing: bool, hparams, encoder_model_fpath):
+                      mel_fpath: str, wav_fpath: str, hparams, encoder_model_fpath):
     ## FOR REFERENCE:
     # For you not to lose your head if you ever wish to change things here or implement your own
     # synthesizer.
@@ -58,13 +58,6 @@ def _process_utterance(wav: np.ndarray, text: str, out_dir: Path, basename: str,
     #   without extra padding. This means that you won't have an exact relation between the length
     #   of the wav and of the mel spectrogram. See the vocoder data loader.
         
-    # Skip existing utterances if needed
-    mel_fpath = out_dir.joinpath("mels", "mel-%s.npy" % basename)
-    wav_fpath = out_dir.joinpath("audio", "audio-%s.npy" % basename)
-    
-    if skip_existing and mel_fpath.exists() and wav_fpath.exists():
-        return None
-
     # Trim silence
     if hparams.trim_silence:
         if not encoder.is_loaded():
@@ -104,29 +97,35 @@ def _split_on_silences(wav_fpath, words, hparams):
         wav = logmmse.denoise(wav, profile, eta=0)
 
     resp = pinyin(words, style=Style.TONE3)
-    res = [v[0] for v in resp if v[0].strip()]
+    res = filter(lambda v : not v.isspace(),map(lambda v: v[0],resp)) 
     res = " ".join(res)
 
     return wav, res
 
 def preprocess_general(speaker_dir, out_dir: Path, skip_existing: bool, hparams, dict_info, no_alignments: bool, encoder_model_fpath: Path):
     metadata = []
-    extensions = ["*.wav", "*.flac", "*.mp3"]
+    extensions = ("*.wav", "*.flac", "*.mp3")
     for extension in extensions:
         wav_fpath_list = speaker_dir.glob(extension)
         # Iterate over each wav
         for wav_fpath in wav_fpath_list:
             words = dict_info.get(wav_fpath.name.split(".")[0])
-            words = dict_info.get(wav_fpath.name) if not words else words # try with extension 
             if not words:
-                print("no wordS")
-                continue
+                words = dict_info.get(wav_fpath.name) # try with extension 
+                if not words:
+                    print(f"No word found in dict_info for {wav_fpath.name}, skip it")
+                    continue
             sub_basename = "%s_%02d" % (wav_fpath.name, 0)
+            mel_fpath_out = out_dir.joinpath("mels", f"mel-{sub_basename}.npy")
+            wav_fpath_out = out_dir.joinpath("audio", f"audio-{sub_basename}.npy")
+            
+            if skip_existing and mel_fpath_out.exists() and wav_fpath_out.exists():
+                continue
             wav, text = _split_on_silences(wav_fpath, words, hparams)
-            result = _process_utterance(wav, text, out_dir, sub_basename, 
-                                                skip_existing, hparams, encoder_model_fpath)
+            result = _process_utterance(wav, text, out_dir, sub_basename, mel_fpath_out, wav_fpath_out, hparams, encoder_model_fpath)
             if result is None:
                 continue
             wav_fpath_name, mel_fpath_name, embed_fpath_name, wav, mel_frames, text = result
-            metadata.append([wav_fpath_name, mel_fpath_name, embed_fpath_name, len(wav), mel_frames, text])
-    return [m for m in metadata if m is not None]
+            metadata.append ((wav_fpath_name, mel_fpath_name, embed_fpath_name, len(wav), mel_frames, text))
+
+    return metadata
